@@ -32,9 +32,11 @@ class MyGame extends FlameGame with HasCollisionDetection, TapCallbacks {
   late CollectibleSpawner collectibleSpawner;
   late Background background;
   late BulletSpawner bulletSpawner;
+  late EffectsManager effectsManager;
   GameState gameState = GameState.menu;
   int difficultyLevel = 1;
   double gameTime = 0;
+  double screenShake = 0;
   
   @override
   Future<void> onLoad() async {
@@ -46,8 +48,10 @@ class MyGame extends FlameGame with HasCollisionDetection, TapCallbacks {
     spawner = EnemySpawner();
     collectibleSpawner = CollectibleSpawner();
     bulletSpawner = BulletSpawner();
+    effectsManager = EffectsManager();
     
     await add(background);
+    await add(effectsManager);
     await add(score);
     await add(player);
     await add(spawner);
@@ -75,6 +79,9 @@ class MyGame extends FlameGame with HasCollisionDetection, TapCallbacks {
         spawner.increaseDifficulty(difficultyLevel);
         collectibleSpawner.increaseDifficulty(difficultyLevel);
       }
+    }
+    if (screenShake > 0) {
+      screenShake -= dt * 10;
     }
   }
   
@@ -129,9 +136,17 @@ class MyGame extends FlameGame with HasCollisionDetection, TapCallbacks {
     } catch (_) {}
   }
   
-  void showExplosion(Vector2 position) {
-    for (int i = 0; i < 20; i++) {
-      add(ExplosionParticle(position: position));
+  void triggerScreenShake(double intensity) {
+    screenShake = intensity;
+  }
+  
+  void showExplosion(Vector2 position, {bool isBig = false}) {
+    screenShake = isBig ? 15 : 8;
+    for (int i = 0; i < (isBig ? 40 : 20); i++) {
+      add(ExplosionParticle(position: position, isBig: isBig));
+    }
+    for (int i = 0; i < (isBig ? 15 : 8); i++) {
+      add(SmokeParticle(position: position));
     }
   }
   
@@ -167,31 +182,52 @@ class MyGame extends FlameGame with HasCollisionDetection, TapCallbacks {
   }
 }
 
+class EffectsManager extends Component with HasGameReference<MyGame> {
+  @override
+  void render(Canvas canvas) {
+    if (game.screenShake > 0) {
+      final shakeX = (Random().nextDouble() - 0.5) * game.screenShake;
+      final shakeY = (Random().nextDouble() - 0.5) * game.screenShake;
+      canvas.translate(shakeX, shakeY);
+    }
+  }
+}
+
 class Background extends Component with HasGameReference<MyGame> {
   final Random _random = Random();
   final List<Star> stars = [];
   final List<Nebula> nebulae = [];
+  final List<Cloud> clouds = [];
   
   @override
   Future<void> onLoad() async {
     await super.onLoad();
-    for (int i = 0; i < 100; i++) {
+    for (int i = 0; i < 150; i++) {
       stars.add(Star(
         position: Vector2(_random.nextDouble() * 1200, _random.nextDouble() * 1200),
-        size: 1 + _random.nextDouble() * 2,
+        size: 0.5 + _random.nextDouble() * 2.5,
         brightness: 0.3 + _random.nextDouble() * 0.7,
+        twinkleSpeed: 0.5 + _random.nextDouble() * 2,
+        twinkleOffset: _random.nextDouble() * pi * 2,
+      ));
+    }
+    for (int i = 0; i < 8; i++) {
+      nebulae.add(Nebula(
+        position: Vector2(_random.nextDouble() * 800, _random.nextDouble() * 600),
+        size: 100 + _random.nextDouble() * 250,
+        color: Color.fromRGBO(
+          80 + _random.nextInt(120),
+          30 + _random.nextInt(80),
+          120 + _random.nextInt(130),
+          0.08,
+        ),
       ));
     }
     for (int i = 0; i < 5; i++) {
-      nebulae.add(Nebula(
+      clouds.add(Cloud(
         position: Vector2(_random.nextDouble() * 800, _random.nextDouble() * 600),
-        size: 150 + _random.nextDouble() * 200,
-        color: Color.fromRGBO(
-          100 + _random.nextInt(100),
-          50 + _random.nextInt(100),
-          150 + _random.nextInt(100),
-          0.1,
-        ),
+        size: 80 + _random.nextDouble() * 100,
+        speed: 10 + _random.nextDouble() * 20,
       ));
     }
   }
@@ -207,6 +243,13 @@ class Background extends Component with HasGameReference<MyGame> {
           star.position.x = _random.nextDouble() * game.size.x;
         }
       }
+      for (final cloud in clouds) {
+        cloud.position.y += cloud.speed * dt;
+        if (cloud.position.y > game.size.y + cloud.size) {
+          cloud.position.y = -cloud.size;
+          cloud.position.x = _random.nextDouble() * game.size.x;
+        }
+      }
     }
   }
   
@@ -216,10 +259,10 @@ class Background extends Component with HasGameReference<MyGame> {
       begin: Alignment.topCenter,
       end: Alignment.bottomCenter,
       colors: [
-        const Color(0xFF000033),
+        const Color(0xFF000022),
         const Color(0xFF0a0a2e),
-        const Color(0xFF1a0a2e),
-        const Color(0xFF000011),
+        const Color(0xFF150a35),
+        const Color(0xFF000018),
       ],
     );
     canvas.drawRect(
@@ -235,11 +278,22 @@ class Background extends Component with HasGameReference<MyGame> {
       canvas.drawCircle(nebula.position.toOffset(), nebula.size, paint);
     }
     
+    for (final cloud in clouds) {
+      final cloudPaint = Paint()
+        ..color = const Color(0xFF1a1a3a).withValues(alpha: 0.3);
+      canvas.drawOval(
+        Rect.fromCenter(center: cloud.position.toOffset(), width: cloud.size * 2, height: cloud.size),
+        cloudPaint,
+      );
+    }
+    
+    final time = DateTime.now().millisecondsSinceEpoch / 1000.0;
     for (final star in stars) {
+      final twinkle = sin(time * star.twinkleSpeed + star.twinkleOffset) * 0.3 + 0.7;
       canvas.drawCircle(
         star.position.toOffset(),
         star.size,
-        Paint()..color = Colors.white.withValues(alpha: star.brightness),
+        Paint()..color = Colors.white.withValues(alpha: star.brightness * twinkle),
       );
     }
   }
@@ -249,8 +303,10 @@ class Star {
   Vector2 position;
   double size;
   double brightness;
-  double speed = 20 + Random().nextDouble() * 40;
-  Star({required this.position, required this.size, required this.brightness});
+  double speed = 15 + Random().nextDouble() * 35;
+  double twinkleSpeed;
+  double twinkleOffset;
+  Star({required this.position, required this.size, required this.brightness, required this.twinkleSpeed, required this.twinkleOffset});
 }
 
 class Nebula {
@@ -258,6 +314,13 @@ class Nebula {
   double size;
   Color color;
   Nebula({required this.position, required this.size, required this.color});
+}
+
+class Cloud {
+  Vector2 position;
+  double size;
+  double speed;
+  Cloud({required this.position, required this.size, required this.speed});
 }
 
 class Player extends PositionComponent with HasGameReference<MyGame>, CollisionCallbacks {
@@ -269,6 +332,7 @@ class Player extends PositionComponent with HasGameReference<MyGame>, CollisionC
   double shootCooldown = 0;
   bool isTripleShot = false;
   double tripleShotTimer = 0;
+  double thrustIntensity = 0;
   
   Player() : super(
     size: Vector2(80, 50),
@@ -290,11 +354,11 @@ class Player extends PositionComponent with HasGameReference<MyGame>, CollisionC
     game.playShootSound();
     
     if (isTripleShot) {
-      game.add(Bullet(Vector2(position.x, position.y - 20), Vector2(0, -600)));
-      game.add(Bullet(Vector2(position.x - 15, position.y - 10), Vector2(-50, -580)));
-      game.add(Bullet(Vector2(position.x + 15, position.y - 10), Vector2(50, -580)));
+      game.add(Bullet(Vector2(position.x, position.y - 20), Vector2(0, -650)));
+      game.add(Bullet(Vector2(position.x - 15, position.y - 10), Vector2(-50, -620)));
+      game.add(Bullet(Vector2(position.x + 15, position.y - 10), Vector2(50, -620)));
     } else {
-      game.add(Bullet(Vector2(position.x, position.y - 20), Vector2(0, -600)));
+      game.add(Bullet(Vector2(position.x, position.y - 20), Vector2(0, -650)));
     }
   }
   
@@ -322,6 +386,7 @@ class Player extends PositionComponent with HasGameReference<MyGame>, CollisionC
           game.showExplosion(other.position.clone());
           isShielded = false;
         } else {
+          game.showExplosion(position.clone(), isBig: true);
           game.gameOver();
         }
       }
@@ -349,7 +414,6 @@ class Player extends PositionComponent with HasGameReference<MyGame>, CollisionC
       invincibilityTimer -= dt;
       if (invincibilityTimer <= 0) {
         isInvincible = false;
-        if (!isShielded) {}
       }
     }
     if (isTripleShot) {
@@ -363,7 +427,13 @@ class Player extends PositionComponent with HasGameReference<MyGame>, CollisionC
     if (diff.length > 5) {
       final dir = diff.normalized();
       position += dir * speed * dt;
+      thrustIntensity = min(1.0, thrustIntensity + dt * 3);
+    } else {
+      thrustIntensity = max(0.3, thrustIntensity - dt * 2);
     }
+    
+    game.add(EngineExhaust(position: Vector2(position.x - 10, position.y + 25), intensity: thrustIntensity));
+    game.add(EngineExhaust(position: Vector2(position.x + 10, position.y + 25), intensity: thrustIntensity));
     
     final gameSize = game.size;
     position.x = position.x.clamp(size.x / 2, gameSize.x - size.x / 2);
@@ -378,85 +448,95 @@ class Player extends PositionComponent with HasGameReference<MyGame>, CollisionC
     final bodyPaint = Paint()..color = const Color(0xFF2C3E50);
     final cockpitPaint = Paint()..color = const Color(0xFF5DADE2);
     final wingPaint = Paint()..color = const Color(0xFF34495E);
-    final enginePaint = Paint()..color = const Color(0xFFE74C3C);
-    final glowPaint = Paint()..color = const Color(0xFF3498DB);
+    final enginePaint = Paint()..color = const Color(0xFF7F8C8D);
+    final accentPaint = Paint()..color = const Color(0xFF3498DB);
     
     canvas.drawPath(
-      Path()..moveTo(0, -25)
-            ..lineTo(8, -15)
-            ..lineTo(8, 0)
-            ..lineTo(35, 15)
-            ..lineTo(35, 20)
-            ..lineTo(8, 20)
-            ..lineTo(8, 25)
-            ..lineTo(-8, 25)
-            ..lineTo(-8, 20)
-            ..lineTo(-35, 20)
-            ..lineTo(-35, 15)
-            ..lineTo(-8, 0)
-            ..lineTo(-8, -15)
+      Path()..moveTo(0, -28)
+            ..lineTo(10, -18)
+            ..lineTo(10, 0)
+            ..lineTo(38, 18)
+            ..lineTo(38, 24)
+            ..lineTo(10, 24)
+            ..lineTo(10, 30)
+            ..lineTo(-10, 30)
+            ..lineTo(-10, 24)
+            ..lineTo(-38, 24)
+            ..lineTo(-38, 18)
+            ..lineTo(-10, 0)
+            ..lineTo(-10, -18)
             ..close(),
       bodyPaint,
     );
     
     canvas.drawPath(
-      Path()..moveTo(0, -15)
-            ..lineTo(5, -8)
-            ..lineTo(0, 0)
-            ..lineTo(-5, -8)
+      Path()..moveTo(0, -18)
+            ..lineTo(6, -10)
+            ..lineTo(0, -2)
+            ..lineTo(-6, -10)
             ..close(),
       cockpitPaint,
     );
     
+    final highlightPaint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.3)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1;
+    canvas.drawLine(const Offset(0, -25), const Offset(0, -5), highlightPaint);
+    
     canvas.drawPath(
-      Path()..moveTo(-8, 5)
-            ..lineTo(-30, 18)
-            ..lineTo(-25, 22)
-            ..lineTo(-8, 12)
+      Path()..moveTo(-10, 8)
+            ..lineTo(-32, 20)
+            ..lineTo(-28, 25)
+            ..lineTo(-10, 14)
             ..close(),
       wingPaint,
     );
     canvas.drawPath(
-      Path()..moveTo(8, 5)
-            ..lineTo(30, 18)
-            ..lineTo(25, 22)
-            ..lineTo(8, 12)
+      Path()..moveTo(10, 8)
+            ..lineTo(32, 20)
+            ..lineTo(28, 25)
+            ..lineTo(10, 14)
             ..close(),
       wingPaint,
     );
     
     canvas.drawPath(
-      Path()..moveTo(-15, 22)
-            ..lineTo(-15, 28)
-            ..lineTo(-8, 28)
-            ..lineTo(-8, 22)
+      Path()..moveTo(-18, 25)
+            ..lineTo(-18, 32)
+            ..lineTo(-10, 32)
+            ..lineTo(-10, 25)
             ..close(),
       enginePaint,
     );
     canvas.drawPath(
-      Path()..moveTo(15, 22)
-            ..lineTo(15, 28)
-            ..lineTo(8, 28)
-            ..lineTo(8, 22)
+      Path()..moveTo(18, 25)
+            ..lineTo(18, 32)
+            ..lineTo(10, 32)
+            ..lineTo(10, 25)
             ..close(),
       enginePaint,
     );
     
     canvas.drawPath(
-      Path()..moveTo(0, -25)
-            ..lineTo(3, -20)
-            ..lineTo(0, -18)
-            ..lineTo(-3, -20)
+      Path()..moveTo(0, -28)
+            ..lineTo(4, -22)
+            ..lineTo(0, -20)
+            ..lineTo(-4, -22)
             ..close(),
-      glowPaint,
+      accentPaint,
     );
     
     if (isShielded) {
       final shieldPaint = Paint()
-        ..color = Colors.cyan.withValues(alpha: 0.3)
+        ..color = Colors.cyan.withValues(alpha: 0.2)
+        ..style = PaintingStyle.fill;
+      final shieldStrokePaint = Paint()
+        ..color = Colors.cyan.withValues(alpha: 0.6)
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 3;
-      canvas.drawOval(Rect.fromCenter(center: Offset.zero, width: 70, height: 50), shieldPaint);
+        ..strokeWidth = 2;
+      canvas.drawOval(Rect.fromCenter(center: Offset.zero, width: 75, height: 55), shieldPaint);
+      canvas.drawOval(Rect.fromCenter(center: Offset.zero, width: 75, height: 55), shieldStrokePaint);
     }
     
     if (isInvincible && !isShielded) {
@@ -465,7 +545,7 @@ class Player extends PositionComponent with HasGameReference<MyGame>, CollisionC
         ..color = Colors.yellow.withValues(alpha: alpha)
         ..style = PaintingStyle.stroke
         ..strokeWidth = 2;
-      canvas.drawCircle(Offset.zero, 30, glowPaint);
+      canvas.drawCircle(Offset.zero, 35, glowPaint);
     }
     
     canvas.restore();
@@ -480,18 +560,97 @@ class Player extends PositionComponent with HasGameReference<MyGame>, CollisionC
     invincibilityTimer = 0;
     tripleShotTimer = 0;
     shootCooldown = 0;
+    thrustIntensity = 0.3;
+  }
+}
+
+class EngineExhaust extends CircleComponent with HasGameReference<MyGame> {
+  double lifetime = 0.3;
+  double age = 0;
+  double intensity;
+  
+  EngineExhaust({required Vector2 position, required this.intensity}) : super(
+    position: position,
+    radius: 3 + intensity * 4,
+    paint: Paint()..color = Color.lerp(Colors.orange, Colors.yellow, intensity)!,
+    anchor: Anchor.center,
+  ) {
+    lifetime = 0.2 + intensity * 0.15;
+  }
+  
+  @override
+  void update(double dt) {
+    super.update(dt);
+    if (game.gameState != GameState.playing) return;
+    
+    age += dt;
+    radius *= 1.08;
+    paint.color = Color.lerp(Colors.orange, Colors.red, age / lifetime)!.withValues(alpha: 1 - age / lifetime);
+    
+    if (age >= lifetime) {
+      removeFromParent();
+    }
   }
 }
 
 class Bullet extends PositionComponent with HasGameReference<MyGame>, CollisionCallbacks {
   late Vector2 velocity;
+  final List<Vector2> trail = [];
   
   Bullet(Vector2 position, this.velocity) : super(
     position: position,
-    size: Vector2(6, 18),
+    size: Vector2(6, 20),
     anchor: Anchor.center,
   ) {
-    add(RectangleHitbox(size: Vector2(4, 14)));
+    add(RectangleHitbox(size: Vector2(4, 16)));
+  }
+  
+  @override
+  void update(double dt) {
+    super.update(dt);
+    trail.add(position.clone());
+    if (trail.length > 8) trail.removeAt(0);
+    position += velocity * dt;
+    
+    if (position.y < -20 || position.x < -20 || position.x > game.size.x + 20) {
+      removeFromParent();
+    }
+  }
+  
+  @override
+  void render(Canvas canvas) {
+    for (int i = 0; i < trail.length; i++) {
+      final alpha = i / trail.length * 0.5;
+      final trailRadius = 2.0 + (i / trail.length) * 2;
+      canvas.drawCircle(
+        trail[i].toOffset(),
+        trailRadius,
+        Paint()..color = Colors.orange.withValues(alpha: alpha),
+      );
+    }
+    
+    final gradient = RadialGradient(
+      colors: [Colors.white, Colors.yellow, Colors.orange],
+      stops: const [0.0, 0.5, 1.0],
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromCenter(center: Offset.zero, width: 5, height: 20),
+        const Radius.circular(2.5),
+      ),
+      Paint()..shader = gradient.createShader(Rect.fromCenter(center: Offset.zero, width: 5, height: 20)),
+    );
+    
+    final glowPaint = Paint()
+      ..color = Colors.yellow.withValues(alpha: 0.4)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromCenter(center: Offset.zero, width: 8, height: 24),
+        const Radius.circular(4),
+      ),
+      glowPaint,
+    );
   }
   
   @override
@@ -505,32 +664,6 @@ class Bullet extends PositionComponent with HasGameReference<MyGame>, CollisionC
       game.showExplosion(other.position.clone());
     }
   }
-  
-  @override
-  void update(double dt) {
-    super.update(dt);
-    position += velocity * dt;
-    
-    if (position.y < -20 || position.x < -20 || position.x > game.size.x + 20) {
-      removeFromParent();
-    }
-  }
-  
-  @override
-  void render(Canvas canvas) {
-    final gradient = LinearGradient(
-      begin: Alignment.topCenter,
-      end: Alignment.bottomCenter,
-      colors: [Colors.yellow, Colors.orange],
-    );
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromCenter(center: Offset.zero, width: 4, height: 15),
-        const Radius.circular(2),
-      ),
-      Paint()..shader = gradient.createShader(Rect.fromCenter(center: Offset.zero, width: 4, height: 15)),
-    );
-  }
 }
 
 class BulletSpawner extends Component with HasGameReference<MyGame> {
@@ -541,8 +674,10 @@ class BulletSpawner extends Component with HasGameReference<MyGame> {
 class Enemy extends PositionComponent with HasGameReference<MyGame> {
   late double speed;
   bool isDestroyed = false;
+  double wobble = 0;
+  double wobbleSpeed;
   
-  Enemy(Vector2 position, this.speed) : super(
+  Enemy(Vector2 position, this.speed, {this.wobbleSpeed = 1.0}) : super(
     position: position,
     size: Vector2(50, 50),
     anchor: Anchor.center,
@@ -555,7 +690,8 @@ class Enemy extends PositionComponent with HasGameReference<MyGame> {
     if (game.gameState != GameState.playing) return;
     
     position.y += speed * dt;
-    position.x += sin(position.y / 50) * 1;
+    wobble += dt * wobbleSpeed;
+    position.x += sin(wobble) * 0.8;
     
     if (position.y > game.size.y + 50) {
       removeFromParent();
@@ -570,32 +706,67 @@ class Enemy extends PositionComponent with HasGameReference<MyGame> {
     final bodyPaint = Paint()..color = const Color(0xFF8B0000);
     final cockpitPaint = Paint()..color = const Color(0xFFFF4500);
     final wingPaint = Paint()..color = const Color(0xFF5C0000);
+    final glowPaint = Paint()..color = const Color(0xFFFF6600);
     
     canvas.drawPath(
-      Path()..moveTo(0, 20)
-            ..lineTo(6, 10)
-            ..lineTo(6, 0)
-            ..lineTo(28, -12)
-            ..lineTo(28, -18)
-            ..lineTo(6, -8)
-            ..lineTo(6, -20)
-            ..lineTo(-6, -20)
-            ..lineTo(-6, -8)
-            ..lineTo(-28, -18)
-            ..lineTo(-28, -12)
-            ..lineTo(-6, 0)
-            ..lineTo(-6, 10)
+      Path()..moveTo(0, 22)
+            ..lineTo(8, 12)
+            ..lineTo(8, 0)
+            ..lineTo(30, -14)
+            ..lineTo(30, -20)
+            ..lineTo(8, -10)
+            ..lineTo(8, -22)
+            ..lineTo(-8, -22)
+            ..lineTo(-8, -10)
+            ..lineTo(-30, -20)
+            ..lineTo(-30, -14)
+            ..lineTo(-8, 0)
+            ..lineTo(-8, 12)
             ..close(),
       bodyPaint,
     );
     
     canvas.drawPath(
-      Path()..moveTo(0, 8)
-            ..lineTo(4, 2)
+      Path()..moveTo(0, 10)
+            ..lineTo(5, 3)
             ..lineTo(0, -2)
-            ..lineTo(-4, 2)
+            ..lineTo(-5, 3)
             ..close(),
       cockpitPaint,
+    );
+    
+    canvas.drawPath(
+      Path()..moveTo(-8, 8)
+            ..lineTo(-28, 20)
+            ..lineTo(-22, 24)
+            ..lineTo(-8, 14)
+            ..close(),
+      wingPaint,
+    );
+    canvas.drawPath(
+      Path()..moveTo(8, 8)
+            ..lineTo(28, 20)
+            ..lineTo(22, 24)
+            ..lineTo(8, 14)
+            ..close(),
+      wingPaint,
+    );
+    
+    canvas.drawPath(
+      Path()..moveTo(-12, 18)
+            ..lineTo(-12, 24)
+            ..lineTo(-6, 24)
+            ..lineTo(-6, 18)
+            ..close(),
+      glowPaint,
+    );
+    canvas.drawPath(
+      Path()..moveTo(12, 18)
+            ..lineTo(12, 24)
+            ..lineTo(6, 24)
+            ..lineTo(6, 18)
+            ..close(),
+      glowPaint,
     );
     
     canvas.restore();
@@ -614,6 +785,7 @@ class Collectible extends CircleComponent with HasGameReference<MyGame> {
   }
   
   late double speed;
+  double rotation = 0;
   
   @override
   void update(double dt) {
@@ -622,10 +794,48 @@ class Collectible extends CircleComponent with HasGameReference<MyGame> {
     if (game.gameState != GameState.playing) return;
     
     position.y += speed * dt;
+    rotation += dt * 3;
     
     if (position.y > game.size.y + 50) {
       removeFromParent();
     }
+  }
+  
+  @override
+  void render(Canvas canvas) {
+    canvas.save();
+    canvas.translate(position.x, position.y);
+    canvas.rotate(rotation);
+    
+    final glowPaint = Paint()
+      ..color = Colors.green.withValues(alpha: 0.3)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8);
+    canvas.drawCircle(Offset.zero, radius + 4, glowPaint);
+    
+    final gradient = RadialGradient(
+      colors: [Colors.lightGreen, Colors.green, Color(0xFF006400)],
+    );
+    canvas.drawCircle(Offset.zero, radius, Paint()..shader = gradient.createShader(Rect.fromCircle(center: Offset.zero, radius: radius)));
+    
+    final starPath = Path();
+    for (int i = 0; i < 5; i++) {
+      final angle = (i * 72 - 90) * pi / 180;
+      final outerX = cos(angle) * radius * 0.7;
+      final outerY = sin(angle) * radius * 0.7;
+      final innerAngle = ((i * 72 + 36) - 90) * pi / 180;
+      final innerX = cos(innerAngle) * radius * 0.3;
+      final innerY = sin(innerAngle) * radius * 0.3;
+      if (i == 0) {
+        starPath.moveTo(outerX, outerY);
+      } else {
+        starPath.lineTo(outerX, outerY);
+      }
+      starPath.lineTo(innerX, innerY);
+    }
+    starPath.close();
+    canvas.drawPath(starPath, Paint()..color = Colors.white);
+    
+    canvas.restore();
   }
 }
 
@@ -660,9 +870,10 @@ extension PowerUpTypeExt on PowerUpType {
 
 class PowerUp extends CircleComponent with HasGameReference<MyGame> {
   final PowerUpType type;
+  double rotation = 0;
   
   PowerUp(Vector2 position, this.type) : super(
-    radius: 18,
+    radius: 22,
     position: position,
     paint: Paint()..color = type.color,
     anchor: Anchor.center,
@@ -694,6 +905,7 @@ class PowerUp extends CircleComponent with HasGameReference<MyGame> {
     if (game.gameState != GameState.playing) return;
     
     position.y += 80 * dt;
+    rotation += dt * 2;
     
     if (position.y > game.size.y + 50) {
       removeFromParent();
@@ -702,8 +914,27 @@ class PowerUp extends CircleComponent with HasGameReference<MyGame> {
   
   @override
   void render(Canvas canvas) {
-    super.render(canvas);
-    canvas.drawCircle(Offset.zero, radius, Paint()..color = type.color.withValues(alpha: 0.3));
+    canvas.save();
+    canvas.translate(position.x, position.y);
+    canvas.rotate(rotation);
+    
+    final glowPaint = Paint()
+      ..color = type.color.withValues(alpha: 0.4)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10);
+    canvas.drawCircle(Offset.zero, radius + 6, glowPaint);
+    
+    final gradient = RadialGradient(
+      colors: [type.color.withValues(alpha: 0.8), type.color],
+    );
+    canvas.drawCircle(Offset.zero, radius, Paint()..shader = gradient.createShader(Rect.fromCircle(center: Offset.zero, radius: radius)));
+    
+    final borderPaint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.5)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2;
+    canvas.drawCircle(Offset.zero, radius, borderPaint);
+    
+    canvas.restore();
   }
 }
 
@@ -712,17 +943,19 @@ class ExplosionParticle extends CircleComponent with HasGameReference<MyGame> {
   late Vector2 velocity;
   double lifetime = 0.6;
   double age = 0;
+  bool isBig;
   
-  ExplosionParticle({required Vector2 position}) : super(
-    radius: 3.0,
+  ExplosionParticle({required Vector2 position, this.isBig = false}) : super(
+    radius: isBig ? 5.0 : 3.0,
     position: position,
     paint: Paint()..color = Colors.orange,
     anchor: Anchor.center,
   ) {
     final angle = random.nextDouble() * 2 * pi;
-    final speed = 100 + random.nextDouble() * 200;
+    final speed = (isBig ? 150 : 100) + random.nextDouble() * (isBig ? 250 : 200);
     velocity = Vector2(cos(angle) * speed, sin(angle) * speed);
-    radius = 3 + random.nextDouble() * 4;
+    lifetime = isBig ? 0.8 : 0.5;
+    radius = (isBig ? 4 : 2) + random.nextDouble() * (isBig ? 6 : 4);
     paint.color = Color.lerp(Colors.orange, Colors.red, random.nextDouble())!;
   }
   
@@ -733,8 +966,49 @@ class ExplosionParticle extends CircleComponent with HasGameReference<MyGame> {
     if (game.gameState != GameState.playing) return;
     
     position += velocity * dt;
-    velocity *= 0.95;
+    velocity *= 0.94;
     age += dt;
+    
+    paint.color = Color.lerp(
+      Color.lerp(Colors.orange, Colors.red, age / lifetime)!,
+      Colors.black,
+      age / lifetime,
+    )!.withValues(alpha: 1 - age / lifetime);
+    
+    if (age >= lifetime) {
+      removeFromParent();
+    }
+  }
+}
+
+class SmokeParticle extends CircleComponent with HasGameReference<MyGame> {
+  final Random random = Random();
+  late Vector2 velocity;
+  double lifetime = 0.8;
+  double age = 0;
+  
+  SmokeParticle({required Vector2 position}) : super(
+    radius: 2,
+    position: position,
+    paint: Paint()..color = Colors.grey.withValues(alpha: 0.5),
+    anchor: Anchor.center,
+  ) {
+    final angle = random.nextDouble() * 2 * pi;
+    final speed = 20 + random.nextDouble() * 40;
+    velocity = Vector2(cos(angle) * speed, sin(angle) * speed - 20);
+  }
+  
+  @override
+  void update(double dt) {
+    super.update(dt);
+    
+    if (game.gameState != GameState.playing) return;
+    
+    position += velocity * dt;
+    velocity *= 0.98;
+    age += dt;
+    radius += dt * 15;
+    paint.color = Colors.grey.withValues(alpha: max(0, 0.5 - age / lifetime));
     
     if (age >= lifetime) {
       removeFromParent();
@@ -743,19 +1017,19 @@ class ExplosionParticle extends CircleComponent with HasGameReference<MyGame> {
 }
 
 class GameParticle extends CircleComponent with HasGameReference<MyGame> {
-  final Random _random = Random();
+  final Random random = Random();
   late Vector2 velocity;
   double lifetime = 0.5;
   double age = 0;
   
   GameParticle({required Vector2 position, required Color color}) : super(
-    radius: 3 + Random().nextDouble() * 3,
+    radius: 3,
     position: position,
     paint: Paint()..color = color,
     anchor: Anchor.center,
   ) {
-    final angle = _random.nextDouble() * 2 * pi;
-    final speed = 50 + _random.nextDouble() * 100;
+    final angle = random.nextDouble() * 2 * pi;
+    final speed = 50 + random.nextDouble() * 100;
     velocity = Vector2(cos(angle) * speed, sin(angle) * speed);
   }
   
@@ -804,7 +1078,8 @@ class EnemySpawner extends Component with HasGameReference<MyGame> {
     final gameWidth = game.size.x;
     final x = _random.nextDouble() * (gameWidth - 60) + 30;
     final speed = _slowTimer > 0 ? _enemySpeed * 0.5 : _enemySpeed;
-    game.add(Enemy(Vector2(x, -30), speed));
+    final wobbleSpeed = 0.5 + _random.nextDouble() * 1.5;
+    game.add(Enemy(Vector2(x, -30), speed, wobbleSpeed: wobbleSpeed));
   }
   
   void increaseDifficulty(int level) {
@@ -911,14 +1186,21 @@ class ScoreComponent extends Component with HasGameReference<MyGame> {
   }
   
   void _drawMenu(Canvas canvas) {
+    final titleGradient = LinearGradient(
+      colors: [Colors.cyan, Colors.blue, Colors.purple],
+    );
     final titlePainter = TextPainter(
-      text: const TextSpan(
+      text: TextSpan(
         text: 'STAR FIGHTER',
-        style: TextStyle(
+        style: const TextStyle(
           color: Colors.white,
-          fontSize: 48,
+          fontSize: 52,
           fontWeight: FontWeight.bold,
-          letterSpacing: 4,
+          letterSpacing: 6,
+          shadows: [
+            Shadow(color: Colors.cyan, blurRadius: 20),
+            Shadow(color: Colors.blue, blurRadius: 30),
+          ],
         ),
       ),
       textDirection: TextDirection.ltr,
@@ -931,11 +1213,12 @@ class ScoreComponent extends Component with HasGameReference<MyGame> {
     
     final startPainter = TextPainter(
       text: const TextSpan(
-        text: 'TAP TO START',
+        text: '▶ TAP TO START',
         style: TextStyle(
           color: Colors.cyan,
-          fontSize: 24,
+          fontSize: 26,
           fontWeight: FontWeight.bold,
+          letterSpacing: 2,
         ),
       ),
       textDirection: TextDirection.ltr,
@@ -949,10 +1232,11 @@ class ScoreComponent extends Component with HasGameReference<MyGame> {
     if (highScore > 0) {
       final highScorePainter = TextPainter(
         text: TextSpan(
-          text: 'HIGH SCORE: $highScore',
+          text: '★ HIGH SCORE: $highScore',
           style: const TextStyle(
             color: Colors.yellow,
-            fontSize: 20,
+            fontSize: 22,
+            fontWeight: FontWeight.bold,
           ),
         ),
         textDirection: TextDirection.ltr,
@@ -960,7 +1244,7 @@ class ScoreComponent extends Component with HasGameReference<MyGame> {
       highScorePainter.layout();
       highScorePainter.paint(canvas, Vector2(
         game.size.x / 2 - highScorePainter.width / 2,
-        game.size.y / 2 + 50,
+        game.size.y / 2 + 55,
       ).toOffset());
     }
   }
@@ -971,8 +1255,11 @@ class ScoreComponent extends Component with HasGameReference<MyGame> {
         text: 'GAME OVER',
         style: TextStyle(
           color: Colors.red,
-          fontSize: 52,
+          fontSize: 56,
           fontWeight: FontWeight.bold,
+          shadows: [
+            Shadow(color: Colors.red, blurRadius: 30),
+          ],
         ),
       ),
       textDirection: TextDirection.ltr,
@@ -988,7 +1275,8 @@ class ScoreComponent extends Component with HasGameReference<MyGame> {
         text: 'SCORE: $score',
         style: const TextStyle(
           color: Colors.white,
-          fontSize: 32,
+          fontSize: 34,
+          fontWeight: FontWeight.bold,
         ),
       ),
       textDirection: TextDirection.ltr,
@@ -1001,10 +1289,11 @@ class ScoreComponent extends Component with HasGameReference<MyGame> {
     
     final highScorePainter = TextPainter(
       text: TextSpan(
-        text: 'HIGH SCORE: $highScore',
+        text: '★ HIGH SCORE: $highScore',
         style: const TextStyle(
           color: Colors.yellow,
-          fontSize: 24,
+          fontSize: 26,
+          fontWeight: FontWeight.bold,
         ),
       ),
       textDirection: TextDirection.ltr,
@@ -1012,15 +1301,15 @@ class ScoreComponent extends Component with HasGameReference<MyGame> {
     highScorePainter.layout();
     highScorePainter.paint(canvas, Vector2(
       game.size.x / 2 - highScorePainter.width / 2,
-      game.size.y / 2 + 45,
+      game.size.y / 2 + 50,
     ).toOffset());
     
     final restartPainter = TextPainter(
       text: const TextSpan(
-        text: 'TAP TO RESTART',
+        text: '▶ TAP TO RESTART',
         style: TextStyle(
           color: Colors.white70,
-          fontSize: 20,
+          fontSize: 22,
         ),
       ),
       textDirection: TextDirection.ltr,
@@ -1028,37 +1317,54 @@ class ScoreComponent extends Component with HasGameReference<MyGame> {
     restartPainter.layout();
     restartPainter.paint(canvas, Vector2(
       game.size.x / 2 - restartPainter.width / 2,
-      game.size.y / 2 + 100,
+      game.size.y / 2 + 110,
     ).toOffset());
   }
   
   void _drawScore(Canvas canvas) {
+    final scoreShadow = Paint()..color = Colors.black54;
     final scorePainter = TextPainter(
       text: TextSpan(
-        text: 'SCORE: $score',
+        text: '$score',
         style: const TextStyle(
           color: Colors.white,
-          fontSize: 22,
+          fontSize: 28,
           fontWeight: FontWeight.bold,
         ),
       ),
       textDirection: TextDirection.ltr,
     );
     scorePainter.layout();
-    scorePainter.paint(canvas, const Offset(16, 16));
+    scorePainter.paint(canvas, const Offset(20, 20));
+    
+    final labelPainter = TextPainter(
+      text: const TextSpan(
+        text: 'SCORE',
+        style: TextStyle(
+          color: Colors.white70,
+          fontSize: 12,
+          fontWeight: FontWeight.bold,
+          letterSpacing: 2,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    );
+    labelPainter.layout();
+    labelPainter.paint(canvas, const Offset(20, 52));
     
     final levelPainter = TextPainter(
       text: TextSpan(
-        text: 'LEVEL: ${game.difficultyLevel}',
+        text: 'LV ${game.difficultyLevel}',
         style: const TextStyle(
           color: Colors.yellow,
           fontSize: 18,
+          fontWeight: FontWeight.bold,
         ),
       ),
       textDirection: TextDirection.ltr,
     );
     levelPainter.layout();
-    levelPainter.paint(canvas, const Offset(16, 44));
+    levelPainter.paint(canvas, Offset(game.size.x - levelPainter.width - 20, 20));
     
     if (game.player.isShielded) {
       final shieldPainter = TextPainter(
@@ -1073,7 +1379,7 @@ class ScoreComponent extends Component with HasGameReference<MyGame> {
         textDirection: TextDirection.ltr,
       );
       shieldPainter.layout();
-      shieldPainter.paint(canvas, Offset(game.size.x - shieldPainter.width - 16, 16));
+      shieldPainter.paint(canvas, Offset(game.size.x - shieldPainter.width - 20, 50));
     }
     
     if (game.player.isTripleShot) {
@@ -1089,7 +1395,7 @@ class ScoreComponent extends Component with HasGameReference<MyGame> {
         textDirection: TextDirection.ltr,
       );
       triplePainter.layout();
-      triplePainter.paint(canvas, Offset(game.size.x - triplePainter.width - 16, 40));
+      triplePainter.paint(canvas, Offset(game.size.x - triplePainter.width - 20, 75));
     }
   }
   
