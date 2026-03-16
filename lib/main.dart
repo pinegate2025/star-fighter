@@ -11,22 +11,53 @@ void main() {
   runApp(const MyGameApp());
 }
 
-class MyGameApp extends StatelessWidget {
+class MyGameApp extends StatefulWidget {
   const MyGameApp({super.key});
+
+  @override
+  State<MyGameApp> createState() => _MyGameAppState();
+}
+
+class _MyGameAppState extends State<MyGameApp> {
+  late final MyGame game;
+  final FocusNode _focusNode = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    game = MyGame();
+  }
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Star Fighter',
       debugShowCheckedModeBanner: false,
-      home: GameWidget(game: MyGame()),
+      home: RawKeyboardListener(
+        focusNode: _focusNode,
+        autofocus: true,
+        onKey: (event) {
+          if (event is RawKeyDownEvent) {
+            game.onKeyDown(event.logicalKey);
+          } else if (event is RawKeyUpEvent) {
+            game.onKeyUp(event.logicalKey);
+          }
+        },
+        child: GameWidget(game: game),
+      ),
     );
   }
 }
 
 enum GameState { menu, playing, paused, gameOver }
 
-class MyGame extends FlameGame with HasCollisionDetection, TapCallbacks, KeyboardEvents {
+class MyGame extends FlameGame with HasCollisionDetection, TapCallbacks {
   late Player player;
   late ScoreComponent score;
   late EnemySpawner spawner;
@@ -40,6 +71,32 @@ class MyGame extends FlameGame with HasCollisionDetection, TapCallbacks, Keyboar
   double screenShake = 0;
   final Set<LogicalKeyboardKey> keysPressed = {};
   double lastShootTime = 0;
+  
+  void onKeyDown(LogicalKeyboardKey key) {
+    keysPressed.add(key);
+    if (gameState == GameState.menu || gameState == GameState.gameOver) {
+      if (key == LogicalKeyboardKey.space || key == LogicalKeyboardKey.enter) {
+        if (gameState == GameState.menu) {
+          startGame();
+        } else {
+          restart();
+        }
+      }
+    }
+    if (gameState == GameState.playing) {
+      if (key == LogicalKeyboardKey.space) {
+        final now = DateTime.now().millisecondsSinceEpoch;
+        if (now - lastShootTime > 150) {
+          player.shoot();
+          lastShootTime = now.toDouble();
+        }
+      }
+    }
+  }
+  
+  void onKeyUp(LogicalKeyboardKey key) {
+    keysPressed.remove(key);
+  }
   
   @override
   Future<void> onLoad() async {
@@ -72,53 +129,8 @@ class MyGame extends FlameGame with HasCollisionDetection, TapCallbacks, Keyboar
   }
   
   @override
-  void onTapDown(TapDownEvent event) {
-    if (gameState == GameState.menu) {
-      startGame();
-    } else if (gameState == GameState.gameOver) {
-      restart();
-    } else if (gameState == GameState.playing) {
-      player.setTarget(event.localPosition);
-      player.shoot();
-    }
-  }
-  
-  @override
-  KeyEventResult handleKeyEvent(KeyEvent event, Set<LogicalKeyboardKey> keysPressed) {
-    if (event is KeyDownEvent) {
-      this.keysPressed.add(event.logicalKey);
-    } else if (event is KeyUpEvent) {
-      this.keysPressed.remove(event.logicalKey);
-    }
-    
-    if (gameState == GameState.menu || gameState == GameState.gameOver) {
-      if (keysPressed.contains(LogicalKeyboardKey.space) || keysPressed.contains(LogicalKeyboardKey.enter)) {
-        if (gameState == GameState.menu) {
-          startGame();
-        } else if (gameState == GameState.gameOver) {
-          restart();
-        }
-      }
-      return KeyEventResult.handled;
-    }
-    
-    if (gameState == GameState.playing) {
-      if (keysPressed.contains(LogicalKeyboardKey.space)) {
-        final now = DateTime.now().millisecondsSinceEpoch;
-        if (now - lastShootTime > 150) {
-          player.shoot();
-          lastShootTime = now.toDouble();
-        }
-      }
-    }
-    
-    return KeyEventResult.handled;
-  }
-  
-  @override
   void update(double dt) {
     super.update(dt);
-    
     if (gameState == GameState.playing) {
       _handleKeyboardMovement(dt);
       
@@ -163,6 +175,18 @@ class MyGame extends FlameGame with HasCollisionDetection, TapCallbacks, Keyboar
       player.thrustIntensity = min(1.0, player.thrustIntensity + dt * 3);
     } else {
       player.thrustIntensity = max(0.3, player.thrustIntensity - dt * 2);
+    }
+  }
+  
+  @override
+  void onTapDown(TapDownEvent event) {
+    if (gameState == GameState.menu) {
+      startGame();
+    } else if (gameState == GameState.gameOver) {
+      restart();
+    } else if (gameState == GameState.playing) {
+      player.setTarget(event.localPosition);
+      player.shoot();
     }
   }
   
@@ -283,7 +307,7 @@ class Background extends Component with HasGameReference<MyGame> {
     for (int i = 0; i < 8; i++) {
       nebulae.add(Nebula(
         position: Vector2(_random.nextDouble() * 800, _random.nextDouble() * 600),
-        size: 100 + _random.nextDouble() * 250,
+        size: 100.0 + _random.nextDouble() * 250,
         color: Color.fromRGBO(
           80 + _random.nextInt(120),
           30 + _random.nextInt(80),
@@ -295,8 +319,8 @@ class Background extends Component with HasGameReference<MyGame> {
     for (int i = 0; i < 5; i++) {
       clouds.add(Cloud(
         position: Vector2(_random.nextDouble() * 800, _random.nextDouble() * 600),
-        size: 80 + _random.nextDouble() * 100,
-        speed: 10 + _random.nextDouble() * 20,
+        size: 80.0 + _random.nextDouble() * 100,
+        speed: 10.0 + _random.nextDouble() * 20,
       ));
     }
   }
@@ -882,7 +906,7 @@ class Collectible extends CircleComponent with HasGameReference<MyGame> {
     canvas.drawCircle(Offset.zero, radius + 4, glowPaint);
     
     final gradient = RadialGradient(
-      colors: [Colors.lightGreen, Colors.green, Color(0xFF006400)],
+      colors: [Colors.lightGreen, Colors.green, const Color(0xFF006400)],
     );
     canvas.drawCircle(Offset.zero, radius, Paint()..shader = gradient.createShader(Rect.fromCircle(center: Offset.zero, radius: radius)));
     
@@ -1259,9 +1283,9 @@ class ScoreComponent extends Component with HasGameReference<MyGame> {
       colors: [Colors.cyan, Colors.blue, Colors.purple],
     );
     final titlePainter = TextPainter(
-      text: TextSpan(
+      text: const TextSpan(
         text: 'STAR FIGHTER',
-        style: const TextStyle(
+        style: TextStyle(
           color: Colors.white,
           fontSize: 52,
           fontWeight: FontWeight.bold,
@@ -1298,6 +1322,22 @@ class ScoreComponent extends Component with HasGameReference<MyGame> {
       game.size.y / 2,
     ).toOffset());
     
+    final controlsPainter = TextPainter(
+      text: const TextSpan(
+        text: 'WASD / Arrows to move | SPACE to shoot',
+        style: TextStyle(
+          color: Colors.white70,
+          fontSize: 14,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    );
+    controlsPainter.layout();
+    controlsPainter.paint(canvas, Vector2(
+      game.size.x / 2 - controlsPainter.width / 2,
+      game.size.y / 2 + 50,
+    ).toOffset());
+    
     if (highScore > 0) {
       final highScorePainter = TextPainter(
         text: TextSpan(
@@ -1313,7 +1353,7 @@ class ScoreComponent extends Component with HasGameReference<MyGame> {
       highScorePainter.layout();
       highScorePainter.paint(canvas, Vector2(
         game.size.x / 2 - highScorePainter.width / 2,
-        game.size.y / 2 + 55,
+        game.size.y / 2 + 90,
       ).toOffset());
     }
   }
@@ -1375,7 +1415,7 @@ class ScoreComponent extends Component with HasGameReference<MyGame> {
     
     final restartPainter = TextPainter(
       text: const TextSpan(
-        text: '▶ TAP TO RESTART',
+        text: '▶ TAP OR SPACE TO RESTART',
         style: TextStyle(
           color: Colors.white70,
           fontSize: 22,
