@@ -5,6 +5,7 @@ import 'package:flame/game.dart';
 import 'package:flame/components.dart';
 import 'package:flame_audio/flame_audio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 void main() {
   runApp(const MyGameApp());
@@ -25,7 +26,7 @@ class MyGameApp extends StatelessWidget {
 
 enum GameState { menu, playing, paused, gameOver }
 
-class MyGame extends FlameGame with HasCollisionDetection, TapCallbacks {
+class MyGame extends FlameGame with HasCollisionDetection, TapCallbacks, KeyboardEvents {
   late Player player;
   late ScoreComponent score;
   late EnemySpawner spawner;
@@ -37,6 +38,8 @@ class MyGame extends FlameGame with HasCollisionDetection, TapCallbacks {
   int difficultyLevel = 1;
   double gameTime = 0;
   double screenShake = 0;
+  final Set<LogicalKeyboardKey> keysPressed = {};
+  double lastShootTime = 0;
   
   @override
   Future<void> onLoad() async {
@@ -69,9 +72,56 @@ class MyGame extends FlameGame with HasCollisionDetection, TapCallbacks {
   }
   
   @override
+  void onTapDown(TapDownEvent event) {
+    if (gameState == GameState.menu) {
+      startGame();
+    } else if (gameState == GameState.gameOver) {
+      restart();
+    } else if (gameState == GameState.playing) {
+      player.setTarget(event.localPosition);
+      player.shoot();
+    }
+  }
+  
+  @override
+  KeyEventResult handleKeyEvent(KeyEvent event, Set<LogicalKeyboardKey> keysPressed) {
+    if (event is KeyDownEvent) {
+      this.keysPressed.add(event.logicalKey);
+    } else if (event is KeyUpEvent) {
+      this.keysPressed.remove(event.logicalKey);
+    }
+    
+    if (gameState == GameState.menu || gameState == GameState.gameOver) {
+      if (keysPressed.contains(LogicalKeyboardKey.space) || keysPressed.contains(LogicalKeyboardKey.enter)) {
+        if (gameState == GameState.menu) {
+          startGame();
+        } else if (gameState == GameState.gameOver) {
+          restart();
+        }
+      }
+      return KeyEventResult.handled;
+    }
+    
+    if (gameState == GameState.playing) {
+      if (keysPressed.contains(LogicalKeyboardKey.space)) {
+        final now = DateTime.now().millisecondsSinceEpoch;
+        if (now - lastShootTime > 150) {
+          player.shoot();
+          lastShootTime = now.toDouble();
+        }
+      }
+    }
+    
+    return KeyEventResult.handled;
+  }
+  
+  @override
   void update(double dt) {
     super.update(dt);
+    
     if (gameState == GameState.playing) {
+      _handleKeyboardMovement(dt);
+      
       gameTime += dt;
       if (gameTime > 10) {
         difficultyLevel++;
@@ -85,15 +135,34 @@ class MyGame extends FlameGame with HasCollisionDetection, TapCallbacks {
     }
   }
   
-  @override
-  void onTapDown(TapDownEvent event) {
-    if (gameState == GameState.menu) {
-      startGame();
-    } else if (gameState == GameState.gameOver) {
-      restart();
-    } else if (gameState == GameState.playing) {
-      player.setTarget(event.localPosition);
-      player.shoot();
+  void _handleKeyboardMovement(double dt) {
+    const moveSpeed = 400.0;
+    bool moved = false;
+    
+    if (keysPressed.contains(LogicalKeyboardKey.arrowLeft) || keysPressed.contains(LogicalKeyboardKey.keyA)) {
+      player.position.x -= moveSpeed * dt;
+      moved = true;
+    }
+    if (keysPressed.contains(LogicalKeyboardKey.arrowRight) || keysPressed.contains(LogicalKeyboardKey.keyD)) {
+      player.position.x += moveSpeed * dt;
+      moved = true;
+    }
+    if (keysPressed.contains(LogicalKeyboardKey.arrowUp) || keysPressed.contains(LogicalKeyboardKey.keyW)) {
+      player.position.y -= moveSpeed * dt;
+      moved = true;
+    }
+    if (keysPressed.contains(LogicalKeyboardKey.arrowDown) || keysPressed.contains(LogicalKeyboardKey.keyS)) {
+      player.position.y += moveSpeed * dt;
+      moved = true;
+    }
+    
+    player.position.x = player.position.x.clamp(player.size.x / 2, size.x - player.size.x / 2);
+    player.position.y = player.position.y.clamp(player.size.y / 2, size.y - player.size.y / 2);
+    
+    if (moved) {
+      player.thrustIntensity = min(1.0, player.thrustIntensity + dt * 3);
+    } else {
+      player.thrustIntensity = max(0.3, player.thrustIntensity - dt * 2);
     }
   }
   
